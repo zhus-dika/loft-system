@@ -1,0 +1,12 @@
+insert into news(created_at, text, title, user_id) values(now(), 'i love painting', 'favorite painter', 7);
+
+INSERT INTO users(username, surName, firstName, middleName, password, perm_id) VALUES('madiko','duissenov','madi',' ', '12345', 1);
+
+***************for chat default values************************1
+insert into permission_object(C, R, U, D) values(false, false, true, true);
+***************for news default values************************2
+insert into permission_object(C, R, U, D) values(false, false, true, false);
+***************for settings default values************************3
+insert into permission_object(C, R, U, D) values(false, false, false, false);
+
+insert into permission(chat, news, settings) values(1, 2, 3);

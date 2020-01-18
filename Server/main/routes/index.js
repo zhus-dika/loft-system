@@ -1,11 +1,38 @@
 var express = require('express')
 var router = express.Router()
 const passport = require('passport');
+const session = require('express-session');
 var passportJWT = require("passport-jwt");
 var bodyParser = require("body-parser");
+const fetch = require('node-fetch');
+const mongoose = require("mongoose");
+const Schema = mongoose.Schema;
+// для работы с promise
+mongoose.Promise = global.Promise;
+// подключение
+mongoose.connect("mongodb://localhost:27017/loft_system")
+// установка схемы
+const personScheme = new Schema({
+  firstName: String,
+  image: String,
+  middleName: String,
+  permission: {
+      chat: { C: Boolean, R: Boolean, U: Boolean, D: Boolean },
+      news: { C: Boolean, R: Boolean, U: Boolean, D: Boolean },
+      settings: { C: Boolean, R: Boolean, U: Boolean, D: Boolean }
+  },
+  surName: String,
+  username: String,
+  accessToken: String,
+  refreshToken: String,
+  accessTokenExpiredAt: Date,
+  refreshTokenExpiredAt: Date
+});
+
 var ExtractJwt = passportJWT.ExtractJwt;
 var JwtStrategy = passportJWT.Strategy;
 var jwt = require('jsonwebtoken');
+const config = require('../../config')
 var pool = require('../models/db')
 router.use(bodyParser.urlencoded({
   extended: true
@@ -13,16 +40,16 @@ router.use(bodyParser.urlencoded({
 router.use(bodyParser.json())
 var jwtOptions = {}
 jwtOptions.jwtFromRequest = ExtractJwt.fromAuthHeaderAsBearerToken();
-jwtOptions.secretOrKey = 'tasmanianDevil';
+jwtOptions.secretOrKey = config.secret;
+
 router.use(passport.initialize());
 var strategy = new JwtStrategy(jwtOptions, function(jwt_payload, next) {
   console.log('payload received', jwt_payload);
-  // usually this would be a database call:
   let id = [jwt_payload.id]
   pool.query(`select * from users where uid=$1;`, id, 
   (q_err, q_res) => {
     if(q_err) next(q_err)
-    let user = q_res.rows
+    let user = q_res.rows[0]
     if (user) {
       next(null, user);
     } else {
@@ -31,41 +58,109 @@ var strategy = new JwtStrategy(jwtOptions, function(jwt_payload, next) {
   })
 })
 passport.use(strategy);
+function getTokenFromHeaders(req){
+  if(req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer'){
+      return req.headers.authorization.split(' ')[1];
+  }
+  return null;
+}
+/**************************************************************/
 
-/*
-    POSTS ROUTES SECTION
-*/
 router.post("/api/login", function(req, res) {
   if(req.body.username && req.body.password){
     var username = req.body.username;
     var password = req.body.password;
   }
-  // usually this would be a database call:
-  const values = [username, password]
-  pool.query(`select * from users where username=$1 and password=$2;`, values, 
-  (q_err, q_res) => {
+  let values = [username, password]
+  pool.query(`select * from users where username=$1 and password=$2;`, values, (q_err, q_res) => {
+    if(q_err) return next(q_err)
     let user = q_res.rows[0]
+    if( !user ){ res.status(401).json({message: "no such user found"});
+     } else { 
+      var payload = {id: user.uid};
+      const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+      const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+      values = [accessToken, refreshToken, user.uid]
+      pool.query(`UPDATE users SET accessToken = $1, refreshToken=$2 WHERE uid = $3;`, values)
+      req.session.accessToken = accessToken
+      req.session.refreshToken = refreshToken
+      //req.session.accessTokenExpiredAt = Date.now() + config.accessTokenLife
+      return res.send(user)
+     }
+  })
+})
+/**************************************************************/
+
+router.get("/api/profile", function(req, res){
+ /* try {
+    var decoded = jwt.verify(req.session.accessToken, jwtOptions.secretOrKey)
+   } catch (e) {
+    console.log('from redirect')
+    req.headers.authorization = req.session.refreshToken
+   }*/
+   let headers = new Headers({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token });
+   fetch('http://localhost:5000/api/refresh-token', {
+        method: 'post',
+        //body:    JSON.stringify(body),
+        headers: headers,
+    })
+    //.then(res => res.json())
+    .then(res.end('success'));
+    //res.render('http://localhost:5000/api/profile')
+/*
+   let headers = new Headers({'Content-Type': 'application/json'});  
+   headers.append('Authorization','Bearer ')
+   //let options = new RequestOptions();
+   let userId = decoded.id
+   pool.query(`select * from users where uid=$1;`, [userId], (q_err, q_res) => {
     if(q_err) next(q_err)
-    if( !user ){
-    res.status(401).json({message: "no such user found"});
-  } else { 
- // from now on we'll identify the user by the id and the id is the only personalized value that goes into our token
-    var payload = {id: user.uid};
-    var token = jwt.sign(payload, jwtOptions.secretOrKey);
-    res.json({message: "ok", token: token});
+    let user = q_res.rows[0]
+    if (user) {
+      res.send(user)
+    } else {
+      return res.status(401).send('unauthorized');
+    }
+  })*/
+})
+/************************************************************* */
+router.post("/api/refresh-token", function(req, res) {
+  console.log('from refresh-token')
+  if (req.headers && req.headers.authorization) {
+    var authorization = getTokenFromHeaders(req)
+    console.log(authorization)
+    try {
+        var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
+    } catch (e) {
+        res.redirect('/api/login');
+    }
+    let userId = decoded.id
+    pool.query(`select * from users where uid=$1;`, [userId], (q_err, q_res) => {
+      if(q_err) next(q_err)
+      let user = q_res.rows[0]
+      if (user.refreshToken == authorization) {
+        var payload = {id: userId}
+        const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+        const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+        values = [accessToken, refreshToken, userId]
+        pool.query(`UPDATE users SET accessToken = $1, refreshToken=$2 WHERE uid = $3;`, values)
+        res.json({accessToken, refreshToken});
+      } else {
+        return res.status(401).send('unauthorized');
+      }
+    })
   }
 })
-})
-
-router.get("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
+router.patch("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
+  /*firstName: String,
+    middleName: String,
+    surName: String,
+    oldPassword: String,
+    newPassword: String,
+    avatar: File*/
   if (req.headers && req.headers.authorization) {
     var authorization = req.headers.authorization.split(' ')[1],
         decoded;
-    try {
-        decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
-    } catch (e) {
-        return res.status(401).send('unauthorized');
-    }
+    
     let userId = [decoded.id]
     pool.query(`select * from users where uid=$1;`, userId, 
   (q_err, q_res) => {
@@ -85,7 +180,9 @@ router.post('/api/registration', (req, res, next) => {
   pool.query(`INSERT INTO users(username, surName, firstName, middleName, password)
               VALUES($1, $2, $3, $4, $5)`, values, (q_err, q_res) => {
           if(q_err) return next(q_err);
-          res.json(q_res.rows)
+          res.json(q_res.rows
+            
+            )
     })
 })
 router.delete('/api/users/:id', (req, res, next) => {
@@ -96,6 +193,7 @@ router.delete('/api/users/:id', (req, res, next) => {
         })
 })
 router.get('/api/news', (req, res, next ) => {
+  console.log(req.session.token)
   pool.query("SELECT * FROM news ORDER BY created_at DESC", (q_err, q_res) => {
     res.json(q_res.rows)
     })

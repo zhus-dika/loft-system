@@ -23,9 +23,7 @@ CREATE TABLE users (
   u_image VARCHAR(255),
   perm_id INT REFERENCES permission(pid),
   accessToken VARCHAR(255),
-  refreshToken VARCHAR(255),
-  accessTokenExpiredAt TIMESTAMP,
-  refreshTokenExpiredAt TIMESTAMP
+  refreshToken VARCHAR(255)
 );
 CREATE TABLE news (
   nid SERIAL PRIMARY KEY,

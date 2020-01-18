@@ -1,0 +1,6 @@
+{
+    "secret": "terence-tao",
+    "secretRefresh": "some-secret-refresh-token-shit",
+    "accessTokenLife": 30,
+    "refreshTokenLife": 518400
+}
