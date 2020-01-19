@@ -10,9 +10,19 @@ const Schema = mongoose.Schema;
 // для работы с promise
 mongoose.Promise = global.Promise;
 // подключение
-mongoose.connect("mongodb://localhost:27017/loft_system")
+const url = "mongodb://localhost:27017/loft_system";
+mongoose
+.connect(url, {
+useUnifiedTopology: true,
+useNewUrlParser: true,
+})
+.then(() => console.log('DB Connected!'))
+.catch(err => {
+console.log('DB Connection Error: ${err.message}');
+});
+//mongoose.connect(url, { useNewUrlParser: true })
 // установка схемы
-const personScheme = new Schema({
+const userScheme = new Schema({
   firstName: String,
   image: String,
   middleName: String,
@@ -22,18 +32,25 @@ const personScheme = new Schema({
       settings: { C: Boolean, R: Boolean, U: Boolean, D: Boolean }
   },
   surName: String,
-  username: String,
+  username: { type : String , unique : true, required : true, dropDups: true },
+  password: { type: String, required: true},
   accessToken: String,
   refreshToken: String,
   accessTokenExpiredAt: Date,
   refreshTokenExpiredAt: Date
 });
-
+const tokenScheme = new Schema({
+  accessToken: String,
+  refreshToken: String,
+  accessTokenExpiredAt: Date ,
+  refreshTokenExpiredAt: Date
+})
+const User = mongoose.model("User", userScheme);
+const Token= mongoose.model("Token", tokenScheme);
 var ExtractJwt = passportJWT.ExtractJwt;
 var JwtStrategy = passportJWT.Strategy;
 var jwt = require('jsonwebtoken');
 const config = require('../../config')
-var pool = require('../models/db')
 router.use(bodyParser.urlencoded({
   extended: true
 }));
@@ -67,30 +84,54 @@ function getTokenFromHeaders(req){
 /**************************************************************/
 
 router.post("/api/login", function(req, res) {
-  if(req.body.username && req.body.password){
-    var username = req.body.username;
-    var password = req.body.password;
+  let username = req.body.username
+  let password = req.body.password
+  if(username && password){
+    User.find({username: username, password: password}, function(err, user) {
+      //mongoose.disconnect();  // отключение от базы данных
+      if (err) {
+        return res.status(401).json({message: "no such user found"});
+      } else {
+        var payload = {id: user._id};
+        const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+        const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+        user.accessToken = accessToken
+        user.refreshToken = refreshToken 
+        user.accessTokenExpiredAt = Date.now() + config.accessTokenLife
+        user.refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
+        console.log(user.accessToken)
+        return res.send(user)
+      }
+    })
   }
-  let values = [username, password]
-  pool.query(`select * from users where username=$1 and password=$2;`, values, (q_err, q_res) => {
-    if(q_err) return next(q_err)
-    let user = q_res.rows[0]
-    if( !user ){ res.status(401).json({message: "no such user found"});
-     } else { 
-      var payload = {id: user.uid};
-      const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
-      const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
-      values = [accessToken, refreshToken, user.uid]
-      pool.query(`UPDATE users SET accessToken = $1, refreshToken=$2 WHERE uid = $3;`, values)
-      req.session.accessToken = accessToken
-      req.session.refreshToken = refreshToken
-      //req.session.accessTokenExpiredAt = Date.now() + config.accessTokenLife
-      return res.send(user)
-     }
-  })
 })
 /**************************************************************/
-
+router.post('/api/registration', (req, res, next) => {
+  const user = new User({
+    firstName: req.body.firstName,
+    surName: req.body.surName,
+    middleName: req.body.middleName,
+    username: req.body.username,
+    password: req.body.password,
+    permission: {
+      chat: { C: false, R: true, U: true, D: true },
+      news: { C: false, R: true, U: true, D: false },
+      settings: { C: false, R: false, U: false, D: false }
+    },
+    accessToken: '',
+    refreshToken: '',
+    accessTokenExpiredAt: Date.now(),
+    refreshTokenExpiredAt: Date.now()
+  })
+  user.save()
+  .then(function(doc){
+    res.send(doc)
+})
+.catch(function (err){
+  return res.status(401).json({message: err});
+})
+})
+/**************************************************************/
 router.get("/api/profile", function(req, res){
  /* try {
     var decoded = jwt.verify(req.session.accessToken, jwtOptions.secretOrKey)
@@ -174,17 +215,7 @@ router.patch("/api/profile", passport.authenticate('jwt', { session: false }), f
   })
 }
 });
-router.post('/api/registration', (req, res, next) => {
-  const values = [req.body.username, req.body.surName, 
-    req.body.firstName, req.body.middleName, req.body.password]
-  pool.query(`INSERT INTO users(username, surName, firstName, middleName, password)
-              VALUES($1, $2, $3, $4, $5)`, values, (q_err, q_res) => {
-          if(q_err) return next(q_err);
-          res.json(q_res.rows
-            
-            )
-    })
-})
+
 router.delete('/api/users/:id', (req, res, next) => {
   pool.query(`DELETE FROM users
               WHERE uid = $1`, [req.params['id']],

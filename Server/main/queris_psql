@@ -10,3 +10,19 @@ insert into permission_object(C, R, U, D) values(false, false, true, false);
 insert into permission_object(C, R, U, D) values(false, false, false, false);
 
 insert into permission(chat, news, settings) values(1, 2, 3);
+const test = new User({
+  firstName: 'madi',
+  image: '',
+  permission: {
+      chat: { C: false, R: false, U: true, D: true },
+      news: { C: false, R: false, U: true, D: false },
+      settings: { C: false, R: false, U: false, D: false }
+  },
+  surName: 'duissenov',
+  username: 'madiko',
+  password: '12345',
+  accessToken: '',
+  refreshToken: '',
+  accessTokenExpiredAt: Date.now(),
+  refreshTokenExpiredAt: Date.now()
+})
