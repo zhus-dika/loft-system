@@ -262,10 +262,10 @@ router.post('/api/news', passport.authenticate('jwt', { session: false }), (req,
     })
   
 })
-  /**************************U P D A T E  N E W S *********************************** */
+  /**************************U P D A T E  N E W S ************************************/
 router.patch('/api/news/:id', passport.authenticate('jwt', { session: false }), (req, res, next) => {
   News.findOne({ _id: req.params['id'] }, function (err, doc) {
-    if (err) return res.status(401).json({message: "news doesn't exist"})
+    if (err) return res.status(401).json({message: err})
     doc.text = req.body.text
     doc.title = req.body.title
     doc.save()
@@ -277,5 +277,48 @@ router.patch('/api/news/:id', passport.authenticate('jwt', { session: false }), 
     })
   })    
 })
+  /**************************D E L E T E  N E W S ************************************/
+router.delete('/api/news/:id', passport.authenticate('jwt', { session: false }), (req, res, next) => {
+  News.deleteOne({ _id: req.params['id']}, function(err, doc) {
+    if (err) return res.status(401).end({message: err})
+    res.redirect('/api/news')
+  })   
+})
+  /**************************G E T  A L L  U S E R S ************************************/
+router.get('/api/users', passport.authenticate('jwt', { session: false }), (req, res, next ) => {
+  User.find()
+  .then(function(doc){
+    res.send(doc)
+  })
+  .catch(function (err){
+    return res.status(401).json({message: err});
+  })
+})
+  /**************************U P D A T E  U S E R  P E R M I S S I O N************************************/
+  router.patch('/api/users/:id', passport.authenticate('jwt', { session: false }), (req, res, next) => {
+    User.findOne({ _id: req.params['id'] }, function (err, doc) {
+      if (err) return res.status(401).json({message: err})
+      doc.permission.chat.C = req.body.permission.chat.C
+      doc.permission.chat.R = req.body.permission.chat.R
+      doc.permission.chat.U = req.body.permission.chat.U
+      doc.permission.chat.D = req.body.permission.chat.D
 
+      doc.permission.news.C = req.body.permission.news.C
+      doc.permission.news.R = req.body.permission.news.R
+      doc.permission.news.U = req.body.permission.news.U
+      doc.permission.news.D = req.body.permission.news.D
+
+      doc.permission.settings.C = req.body.permission.settings.C
+      doc.permission.settings.R = req.body.permission.settings.R
+      doc.permission.settings.U = req.body.permission.settings.U
+      doc.permission.settings.D = req.body.permission.settings.D
+      doc.save()
+      .then(function(doc){
+        res.redirect('/api/users')
+      })
+      .catch(function (err){
+        return res.status(401).json({message: err});
+      })
+    })    
+  })
 module.exports = router
