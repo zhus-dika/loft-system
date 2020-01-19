@@ -55,20 +55,28 @@ router.use(bodyParser.urlencoded({
   extended: true
 }));
 router.use(bodyParser.json())
-var jwtOptions = {}
-jwtOptions.jwtFromRequest = ExtractJwt.fromAuthHeaderAsBearerToken();
-jwtOptions.secretOrKey = config.secret;
+//ar jwtOptions = {}
+//jwtOptions.jwtFromRequest = ExtractJwt.fromAuthHeaderAsBearerToken();
+//jwtOptions.secretOrKey = config.secret;
+const jwtOptions = {  
+  // Telling Passport to check authorization headers for JWT
+  jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+  // Telling Passport where to find the secret
+  secretOrKey: config.secret,
+  passReqToCallback: true //<= Important, so that the verify function can accept the req param ie verify(req,payload,done)
+}; 
 
 router.use(passport.initialize());
-var strategy = new JwtStrategy(jwtOptions, function(jwt_payload, next) {
+var strategy = new JwtStrategy(jwtOptions, function(req, jwt_payload, done) {
   console.log('payload received', jwt_payload);
-  let id = [jwt_payload.id]
+  let userId = jwt_payload.id
   User.findById(userId)
    .then(function(doc){
-     next(null, doc);
+     req.user = doc
+     done(null, doc);
    })
    .catch(function (err){
-     next(null, false);
+     done(null, false);
    })
 })
 passport.use(strategy);
@@ -78,40 +86,41 @@ function getTokenFromHeaders(req){
   }
   return null;
 }
-/**************************************************************/
+/*************************A P I / L O G I N*************************************/
 
 router.post("/api/login", function(req, res) {
   let username = req.body.username
   let password = req.body.password
   if(username && password){
     User.findOne({username: username, password: password}).lean().exec(function(err, doc) {
-      //mongoose.disconnect();  // отключение от базы данных
       if (err) {
         return res.status(401).json({message: "no such user found"});
       } else {
-        var payload = {id: doc._id};
-        const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
-        const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
-        const accessTokenExpiredAt = Date.now() + config.accessTokenLife
-        const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
-        User.findByIdAndUpdate(doc._id, {
-          accessToken: accessToken,
-          refreshToken: refreshToken, 
-          accessTokenExpiredAt: accessTokenExpiredAt, 
-          refreshTokenExpiredAt: refreshTokenExpiredAt
-        }, function(err, doc) {
-          if (err) return res.status(401).json({message: err});
-        })
-        User.findById(doc._id,
-          function(err, doc) {
-          if (err) return res.status(401).json({message: err});
-          res.send(doc)
-        })
-    } 
-  })
-}
+        if (doc) {
+          var payload = {id: doc._id};
+          const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+          const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+          const accessTokenExpiredAt = Date.now() + config.accessTokenLife
+          const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
+          User.findByIdAndUpdate(doc._id, {
+            accessToken: accessToken,
+            refreshToken: refreshToken, 
+            accessTokenExpiredAt: accessTokenExpiredAt, 
+            refreshTokenExpiredAt: refreshTokenExpiredAt
+          }, function(err, doc) {
+            if (err) return res.status(401).json({message: err});
+          })
+          User.findById(doc._id,
+            function(err, doc) {
+            if (err) return res.status(401).json({message: err});
+            res.send(doc)
+          })
+        } else return res.status(401).json({message: "no such user found"}); 
+      }
+    })
+  }
 })
-/**************************************************************/
+/***********************A P I / R E G I S T R A T I O N***************************************/
 router.post('/api/registration', (req, res, next) => {
   const user = new User({
     firstName: req.body.firstName,
@@ -137,9 +146,9 @@ router.post('/api/registration', (req, res, next) => {
     return res.status(401).json({message: err});
   })
 })
-/**************************************************************/
+/****************************A P I / P R O F I L E**********************************/
 router.get("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
-  console.log(req.get('Authorization'));
+  console.log(req.get.authorization);
   try {
     var decoded = jwt.verify(req.get('Authorization'), jwtOptions.secretOrKey)
    } catch (e) {
@@ -160,14 +169,12 @@ router.get("/api/profile", passport.authenticate('jwt', { session: false }), fun
      return res.status(401).json({message: err});
    })
 })
-/************************************************************* */
-router.post("/api/refresh-token", function(req, res) {
-  console.log('from refresh-token')
-  let authorization = getTokenFromHeaders(req)
+/**************************A P I / R E F R E S H - T O K E N*********************************** */
+router.post("/api/refresh-token", passport.authenticate('jwt', { session: false }), function(req, res) {
+  let authorization = req.user.refreshToken
     try {
         var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
     } catch (e) {
-      console.log('from redirect login')
         res.redirect('/api/login');
     }
     let userId = decoded.id
@@ -186,33 +193,34 @@ router.post("/api/refresh-token", function(req, res) {
       if (doc.refreshToken != authorization) {
         res.redirect('/api/login')
       }
-      res.send({accessToken, refreshToken})
+      req.headers.authorization = refreshToken
+      res.send({
+        accessToken: accessToken, 
+        refreshToken: refreshToken,
+        accessTokenExpiredAt: accessTokenExpiredAt,
+        refreshTokenExpiredAt: refreshTokenExpiredAt
+      })
     })
   })
-router.patch("/api/profile", function(req, res){
-  /*firstName: String,
-    middleName: String,
-    surName: String,
-    oldPassword: String,
-    newPassword: String,
-    avatar: File*/
-    console.log(req.headers.authorization)
-  if (req.headers && req.headers.authorization) {
-    var authorization = req.headers.authorization.split(' ')[1],
-        decoded;
-    let userId = [decoded.id]
-    pool.query(`select * from users where uid=$1;`, userId, 
-  (q_err, q_res) => {
-    if(q_err) next(q_err)
-    let user = q_res.rows
-    if (user) {
-      res.send(user);
-    } else {
-      return res.status(404).send('not found');
-    }
-  })
-}
-});
+  /**************************A P I / P R O F I L E  P A T C H *********************************** */
+
+router.patch("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
+  let user = req.user
+  if(user.password == req.body.oldPassword) {
+    user.firstName = req.body.firstName,
+    user.middleName = req.body.middleName, 
+    user.surName = req.body.surName, 
+    user.password = req.body.newPassword,
+      //image: req.file.name
+    user.save()
+    .then(function(doc){
+      res.send(doc)
+    })
+    .catch(function (err){
+      return res.status(401).json({message: err});
+    })
+  }
+})
 
 router.delete('/api/users/:id', (req, res, next) => {
   pool.query(`DELETE FROM users
