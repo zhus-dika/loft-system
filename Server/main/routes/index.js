@@ -32,8 +32,8 @@ const userScheme = new Schema({
       settings: { C: Boolean, R: Boolean, U: Boolean, D: Boolean }
   },
   surName: String,
-  username: { type : String , unique : true, required : true, dropDups: true },
-  password: { type: String, required: true},
+  username: { type : String},// , unique : true},//, required : true, dropDups: true },
+  password: { type: String},//, required: true},
   accessToken: String,
   refreshToken: String,
   accessTokenExpiredAt: Date,
@@ -63,16 +63,13 @@ router.use(passport.initialize());
 var strategy = new JwtStrategy(jwtOptions, function(jwt_payload, next) {
   console.log('payload received', jwt_payload);
   let id = [jwt_payload.id]
-  pool.query(`select * from users where uid=$1;`, id, 
-  (q_err, q_res) => {
-    if(q_err) next(q_err)
-    let user = q_res.rows[0]
-    if (user) {
-      next(null, user);
-    } else {
-      next(null, false);
-    }
-  })
+  User.findById(userId)
+   .then(function(doc){
+     next(null, doc);
+   })
+   .catch(function (err){
+     next(null, false);
+   })
 })
 passport.use(strategy);
 function getTokenFromHeaders(req){
@@ -87,23 +84,32 @@ router.post("/api/login", function(req, res) {
   let username = req.body.username
   let password = req.body.password
   if(username && password){
-    User.find({username: username, password: password}, function(err, user) {
+    User.findOne({username: username, password: password}).lean().exec(function(err, doc) {
       //mongoose.disconnect();  // отключение от базы данных
       if (err) {
         return res.status(401).json({message: "no such user found"});
       } else {
-        var payload = {id: user._id};
+        var payload = {id: doc._id};
         const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
         const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
-        user.accessToken = accessToken
-        user.refreshToken = refreshToken 
-        user.accessTokenExpiredAt = Date.now() + config.accessTokenLife
-        user.refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
-        console.log(user.accessToken)
-        return res.send(user)
-      }
-    })
-  }
+        const accessTokenExpiredAt = Date.now() + config.accessTokenLife
+        const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
+        User.findByIdAndUpdate(doc._id, {
+          accessToken: accessToken,
+          refreshToken: refreshToken, 
+          accessTokenExpiredAt: accessTokenExpiredAt, 
+          refreshTokenExpiredAt: refreshTokenExpiredAt
+        }, function(err, doc) {
+          if (err) return res.status(401).json({message: err});
+        })
+        User.findById(doc._id,
+          function(err, doc) {
+          if (err) return res.status(401).json({message: err});
+          res.send(doc)
+        })
+    } 
+  })
+}
 })
 /**************************************************************/
 router.post('/api/registration', (req, res, next) => {
@@ -126,82 +132,74 @@ router.post('/api/registration', (req, res, next) => {
   user.save()
   .then(function(doc){
     res.send(doc)
-})
-.catch(function (err){
-  return res.status(401).json({message: err});
-})
+  })
+  .catch(function (err){
+    return res.status(401).json({message: err});
+  })
 })
 /**************************************************************/
-router.get("/api/profile", function(req, res){
- /* try {
-    var decoded = jwt.verify(req.session.accessToken, jwtOptions.secretOrKey)
+router.get("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
+  console.log(req.get('Authorization'));
+  try {
+    var decoded = jwt.verify(req.get('Authorization'), jwtOptions.secretOrKey)
    } catch (e) {
-    console.log('from redirect')
-    req.headers.authorization = req.session.refreshToken
-   }*/
-   let headers = new Headers({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token });
-   fetch('http://localhost:5000/api/refresh-token', {
-        method: 'post',
-        //body:    JSON.stringify(body),
-        headers: headers,
-    })
-    //.then(res => res.json())
-    .then(res.end('success'));
-    //res.render('http://localhost:5000/api/profile')
-/*
-   let headers = new Headers({'Content-Type': 'application/json'});  
-   headers.append('Authorization','Bearer ')
+     console.log('accessToken expired')
+     //return res.status(401).json({message: 'accessToken expired'});
+     res.redirect('/api/refresh-token')
+   }
+   //let headers = new Headers({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token });
+   //headers.append('Authorization','Bearer ')
    //let options = new RequestOptions();
+   console.log('accessToken is valid')
    let userId = decoded.id
-   pool.query(`select * from users where uid=$1;`, [userId], (q_err, q_res) => {
-    if(q_err) next(q_err)
-    let user = q_res.rows[0]
-    if (user) {
-      res.send(user)
-    } else {
-      return res.status(401).send('unauthorized');
-    }
-  })*/
+   User.findById(userId)
+   .then(function(doc){
+     res.send(doc)
+   })
+   .catch(function (err){
+     return res.status(401).json({message: err});
+   })
 })
 /************************************************************* */
 router.post("/api/refresh-token", function(req, res) {
   console.log('from refresh-token')
-  if (req.headers && req.headers.authorization) {
-    var authorization = getTokenFromHeaders(req)
-    console.log(authorization)
+  let authorization = getTokenFromHeaders(req)
     try {
         var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
     } catch (e) {
+      console.log('from redirect login')
         res.redirect('/api/login');
     }
     let userId = decoded.id
-    pool.query(`select * from users where uid=$1;`, [userId], (q_err, q_res) => {
-      if(q_err) next(q_err)
-      let user = q_res.rows[0]
-      if (user.refreshToken == authorization) {
-        var payload = {id: userId}
-        const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
-        const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
-        values = [accessToken, refreshToken, userId]
-        pool.query(`UPDATE users SET accessToken = $1, refreshToken=$2 WHERE uid = $3;`, values)
-        res.json({accessToken, refreshToken});
-      } else {
-        return res.status(401).send('unauthorized');
+    var payload = {id: userId};
+    const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+    const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+    const accessTokenExpiredAt = Date.now() + config.accessTokenLife
+    const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
+    User.findByIdAndUpdate(userId, {
+      accessToken: accessToken,
+      refreshToken: refreshToken, 
+      accessTokenExpiredAt: accessTokenExpiredAt, 
+      refreshTokenExpiredAt: refreshTokenExpiredAt
+    }).lean().exec(function(err, doc) {
+      if (err) return res.status(401).json({message: err});
+      if (doc.refreshToken != authorization) {
+        res.redirect('/api/login')
       }
+      res.send({accessToken, refreshToken})
     })
-  }
-})
-router.patch("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
+  })
+router.patch("/api/profile", function(req, res){
   /*firstName: String,
     middleName: String,
     surName: String,
     oldPassword: String,
     newPassword: String,
     avatar: File*/
+    console.log(req.headers.authorization)
   if (req.headers && req.headers.authorization) {
     var authorization = req.headers.authorization.split(' ')[1],
         decoded;
-    
     let userId = [decoded.id]
     pool.query(`select * from users where uid=$1;`, userId, 
   (q_err, q_res) => {
