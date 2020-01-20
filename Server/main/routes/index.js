@@ -22,7 +22,7 @@ useNewUrlParser: true,
 console.log('DB Connection Error: ${err.message}');
 });
 const userScheme = new Schema({
-  id: Number,
+  id: String,
   firstName: String,
   image: String,
   middleName: String,
@@ -40,14 +40,14 @@ const userScheme = new Schema({
   refreshTokenExpiredAt: Date
 });
 const tokenScheme = new Schema({
-  id: Number,
+  id: String,
   accessToken: String,
   refreshToken: String,
   accessTokenExpiredAt: Date ,
   refreshTokenExpiredAt: Date
 })
 const newsScheme = new Schema({
-  id: Number,
+  id: String,
   created_at: Date,
   text: String,
   title: String,
@@ -144,13 +144,13 @@ router.post('/api/registration', (req, res, next) => {
       username: req.body.username,
       password: req.body.password,
       permission: {
-        /*chat: { C: false, R: true, U: true, D: true },
+        chat: { C: false, R: true, U: true, D: true },
         news: { C: false, R: true, U: true, D: false },
-        settings: { C: false, R: false, U: false, D: false }*/
+        settings: { C: false, R: false, U: false, D: false }
         /**for admin**/
-        chat: { C: true, R: true, U: true, D: true },
+        /*chat: { C: true, R: true, U: true, D: true },
         news: { C: true, R: true, U: true, D: true },
-        settings: { C: true, R: true, U: true, D: true}
+        settings: { C: true, R: true, U: true, D: true}*/
       },
       accessToken: '',
       refreshToken: '',
@@ -227,18 +227,15 @@ router.patch("/api/profile", function(req, res){
     return res.status(401).json({message: err});
   }
   let userId = decoded.id
-  console.log(req.body.firstName)
-
+  console.log(req.body)
   User.findById(userId)
    .then(function(doc){
-     console.log(doc.password)
-     console.log(req.body.firstName)
      if(doc.password == req.body.oldPassword) {
       doc.firstName = req.body.firstName
       doc.middleName = req.body.middleName, 
       doc.surName = req.body.surName, 
       doc.password = req.body.newPassword,
-      //image: req.file.name
+      doc.image = path.join('assets', 'img', req.file.name)
       doc.save()
       .then(function(ndoc){
         res.send(ndoc)
@@ -362,7 +359,7 @@ router.get('/api/users', (req, res, next ) => {
   })
 })
   /**************************U P D A T E  U S E R  P E R M I S S I O N************************************/
-  router.patch('/api/users/:id/permission', passport.authenticate('jwt', { session: false }), (req, res, next) => {
+  router.patch('/api/users/:id/permission', (req, res, next) => {
     User.findOne({ id: req.params['id'] }, function (err, doc) {
       if (err) return res.status(401).json({message: err})
       doc.permission.chat.C = req.body.permission.chat.C
