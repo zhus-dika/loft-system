@@ -251,7 +251,7 @@ router.patch("/api/profile", function(req, res){
   })
   /**************************D E L E T E  U S E R  B Y  I D *********************************** */
 
-router.delete('/api/users/:id', passport.authenticate('jwt', { session: false }), (req, res) => {
+router.delete('/api/users/:id', (req, res) => {//passport.authenticate('jwt', { session: false }), (req, res) => {
     User.deleteOne({ id: req.params['id']}, function(err, doc) {
       if (err) return res.status(401).json({message: err})
       res.send(doc)
@@ -281,7 +281,7 @@ router.post('/api/news', (req, res, next) => {
   let userId = decoded.id
   User.findById(userId)
    .then(function(doc){
-    User.countDocuments({}, function(err, count) {
+    News.countDocuments({}, function(err, count) {
     const news = new News({
       id: count++,
       created_at: Date.now(),
