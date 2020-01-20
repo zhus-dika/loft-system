@@ -6,6 +6,7 @@ var passportJWT = require("passport-jwt");
 var bodyParser = require("body-parser");
 const fetch = require('node-fetch');
 const mongoose = require("mongoose");
+mongoose.set('useFindAndModify', false);
 const Schema = mongoose.Schema;
 // для работы с promise
 mongoose.Promise = global.Promise;
@@ -21,6 +22,7 @@ useNewUrlParser: true,
 console.log('DB Connection Error: ${err.message}');
 });
 const userScheme = new Schema({
+  id: Number,
   firstName: String,
   image: String,
   middleName: String,
@@ -38,12 +40,14 @@ const userScheme = new Schema({
   refreshTokenExpiredAt: Date
 });
 const tokenScheme = new Schema({
+  id: Number,
   accessToken: String,
   refreshToken: String,
   accessTokenExpiredAt: Date ,
   refreshTokenExpiredAt: Date
 })
 const newsScheme = new Schema({
+  id: Number,
   created_at: Date,
   text: String,
   title: String,
@@ -88,89 +92,104 @@ var strategy = new JwtStrategy(jwtOptions, function(req, jwt_payload, done) {
    })
 })
 passport.use(strategy);
-function getTokenFromHeaders(req){
-  if(req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer'){
-      return req.headers.authorization.split(' ')[1];
-  }
-  return null;
-}
 /*************************A P I / L O G I N*************************************/
-
 router.post("/api/login", function(req, res) {
   let username = req.body.username
   let password = req.body.password
+  var id
   if(username && password){
     User.findOne({username: username, password: password}).lean().exec(function(err, doc) {
       if (err) {
-        return res.status(401).json({message: "no such user found"});
+        return res.status(401).json({message: err});
       } else {
         if (doc) {
-          var payload = {id: doc._id};
+          if (err) return res.status(401).json({message: err})
+          id = doc._id
+        } else return res.status(401).json({message: "no such user found"})
+        let update =  new Promise(function(resolve, reject){
+          var payload = {id: id};
           const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
           const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
           const accessTokenExpiredAt = Date.now() + config.accessTokenLife
           const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
-          User.findByIdAndUpdate(doc._id, {
-            accessToken: accessToken,
-            refreshToken: refreshToken, 
-            accessTokenExpiredAt: accessTokenExpiredAt, 
-            refreshTokenExpiredAt: refreshTokenExpiredAt
-          }, function(err, doc) {
-            if (err) return res.status(401).json({message: err});
-          })
-          User.findById(doc._id,
-            function(err, doc) {
-            if (err) return res.status(401).json({message: err});
+          User.findByIdAndUpdate(id, {
+          accessToken: accessToken,
+          refreshToken: refreshToken, 
+          accessTokenExpiredAt: accessTokenExpiredAt, 
+          refreshTokenExpiredAt: refreshTokenExpiredAt
+        }).lean().exec(function(err, doc) {
+          if (err) return res.status(401).json({message: err});
+          resolve(id)
+        })
+      })
+        update.then(function(id){
+          User.findById(id, function(err, doc){
             res.send(doc)
           })
-        } else return res.status(401).json({message: "no such user found"}); 
+        }).catch(function(err) {
+          return res.status(401).json({message: err}); 
+        })      
       }
     })
   }
 })
 /***********************A P I / R E G I S T R A T I O N***************************************/
 router.post('/api/registration', (req, res, next) => {
-  const user = new User({
-    firstName: req.body.firstName,
-    surName: req.body.surName,
-    middleName: req.body.middleName,
-    username: req.body.username,
-    password: req.body.password,
-    permission: {
-      chat: { C: false, R: true, U: true, D: true },
-      news: { C: false, R: true, U: true, D: false },
-      settings: { C: false, R: false, U: false, D: false }
-    },
-    accessToken: '',
-    refreshToken: '',
-    accessTokenExpiredAt: Date.now(),
-    refreshTokenExpiredAt: Date.now()
-  })
-  user.save()
-  .then(function(doc){
-    res.send(doc)
-  })
-  .catch(function (err){
-    return res.status(401).json({message: err});
+  User.countDocuments({}, function(err, count) {
+    const user = new User({
+      id: count++,
+      firstName: req.body.firstName,
+      surName: req.body.surName,
+      middleName: req.body.middleName,
+      username: req.body.username,
+      password: req.body.password,
+      permission: {
+        /*chat: { C: false, R: true, U: true, D: true },
+        news: { C: false, R: true, U: true, D: false },
+        settings: { C: false, R: false, U: false, D: false }*/
+        /**for admin**/
+        chat: { C: true, R: true, U: true, D: true },
+        news: { C: true, R: true, U: true, D: true },
+        settings: { C: true, R: true, U: true, D: true}
+      },
+      accessToken: '',
+      refreshToken: '',
+      accessTokenExpiredAt: Date.now(),
+      refreshTokenExpiredAt: Date.now()
+    })
+    user.save()
+    .then(function(doc){
+      res.send(doc)
+    })
+    .catch(function (err){
+      return res.status(401).json({message: err});
+    })
   })
 })
 /****************************A P I / P R O F I L E**********************************/
-router.get("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
-  let user = req.user
+router.get("/api/profile", function(req, res){
+  let authorization = req.headers.authorization
   try {
     var decoded = jwt.verify(user.accessToken, jwtOptions.secretOrKey)
    } catch (err) {
     return res.status(401).json({message: err});
    }
-   res.send(user)
+   User.findById(userId)
+   .then(function(doc){
+     res.send(doc)
+   })
+   .catch(function (err){
+    return res.status(401).json({message: err})
+   })
 })
 /**************************A P I / R E F R E S H - T O K E N*********************************** */
-router.post("/api/refresh-token", passport.authenticate('jwt', { session: false }), function(req, res) {
-  let authorization = req.user.refreshToken
+router.post("/api/refresh-token", function(req, res) {
+  let authorization = req.headers.authorization
     try {
         var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
-    } catch (e) {
-        res.redirect('/api/login');
+    } catch (err) {
+      return res.status(401).json({message: err});
+        //res.redirect('/api/login');
     }
     let userId = decoded.id
     var payload = {id: userId};
@@ -186,7 +205,8 @@ router.post("/api/refresh-token", passport.authenticate('jwt', { session: false 
     }).lean().exec(function(err, doc) {
       if (err) return res.status(401).json({message: err});
       if (doc.refreshToken != authorization) {
-        res.redirect('/api/login')
+        //res.redirect('/api/login')
+        return res.status(401).json({message: err});
       }
       req.headers.authorization = refreshToken
       res.send({
@@ -199,34 +219,47 @@ router.post("/api/refresh-token", passport.authenticate('jwt', { session: false 
   })
   /**************************A P I / P R O F I L E  P A T C H *********************************** */
 
-router.patch("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
-  let user = req.user
-  if(user.password == req.body.oldPassword) {
-    user.firstName = req.body.firstName,
-    user.middleName = req.body.middleName, 
-    user.surName = req.body.surName, 
-    user.password = req.body.newPassword,
-      //image: req.file.name
-    user.save()
-    .then(function(doc){
-      res.send(doc)
-    })
-    .catch(function (err){
-      return res.status(401).json({message: err});
-    })
+router.patch("/api/profile", function(req, res){
+  let authorization = req.headers.authorization
+  try {
+      var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
+  } catch (err) {
+    return res.status(401).json({message: err});
   }
-})
+  let userId = decoded.id
+  console.log(req.body.firstName)
+
+  User.findById(userId)
+   .then(function(doc){
+     console.log(doc.password)
+     console.log(req.body.firstName)
+     if(doc.password == req.body.oldPassword) {
+      doc.firstName = req.body.firstName
+      doc.middleName = req.body.middleName, 
+      doc.surName = req.body.surName, 
+      doc.password = req.body.newPassword,
+      //image: req.file.name
+      doc.save()
+      .then(function(ndoc){
+        res.send(ndoc)
+      })
+      .catch(function (err){
+        return res.status(401).json({message: err});
+      })
+      } else return res.status(401).json({message: 'password isnt correct'});
+    })
+  })
   /**************************D E L E T E  U S E R  B Y  I D *********************************** */
 
 router.delete('/api/users/:id', passport.authenticate('jwt', { session: false }), (req, res) => {
-    User.deleteOne({ _id: req.params['id']}, function(err, doc) {
+    User.deleteOne({ id: req.params['id']}, function(err, doc) {
       if (err) return res.status(401).json({message: err})
       res.send(doc)
     })
 })
   /**************************G E T  A L L  N E W S *********************************** */
 
-router.get('/api/news', passport.authenticate('jwt', { session: false }), (req, res, next ) => {
+router.get('/api/news', (req, res, next ) => {
   News.find()
    .then(function(doc){
      res.send(doc)
@@ -238,54 +271,88 @@ router.get('/api/news', passport.authenticate('jwt', { session: false }), (req, 
 })
   /**************************C R E A T E  N E W S *********************************** */
 
-router.post('/api/news', passport.authenticate('jwt', { session: false }), (req, res, next) => {
-  let user = req.user
-  const news = new News({
-    created_at: Date.now(),
-    text: req.body.text,
-    title: req.body.title,
-    user: {
-      firstName: user.firstName,
-      id: user._id,
-      image: user.image,
-      middleName: user.middleName,
-      surName: user.surName,
-      username: user.username
-    }
-  })
-  news.save()
+router.post('/api/news', (req, res, next) => {
+  let authorization = req.headers.authorization
+  try {
+      var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
+  } catch (err) {
+    return res.status(401).json({message: err});
+  }
+  let userId = decoded.id
+  User.findById(userId)
+   .then(function(doc){
+    User.countDocuments({}, function(err, count) {
+    const news = new News({
+      id: count++,
+      created_at: Date.now(),
+      text: req.body.text,
+      title: req.body.title,
+      user: {
+        firstName: doc.firstName,
+        id: doc.id,
+        image: '',
+        middleName: doc.middleName,
+        surName: doc.surName,
+        username: doc.username
+      }
+    })
+    news.save()
     .then(function(doc){
-      res.send(doc)
+      News.find()
+      .then(function(indoc){
+        res.send(indoc)
+      })
+      .catch(function (err){
+        return res.status(401).json({message: err});
+      })
     })
     .catch(function (err){
       return res.status(401).json({message: err});
     })
-  
+  }) 
+  })
+   .catch(function (err){
+     return res.status(401).json({message: err});
+   })
 })
   /**************************U P D A T E  N E W S ************************************/
-router.patch('/api/news/:id', passport.authenticate('jwt', { session: false }), (req, res, next) => {
-  News.findOne({ _id: req.params['id'] }, function (err, doc) {
+router.patch('/api/news/:id', (req, res, next) => {
+  News.findOneAndUpdate({id: req.params['id'] }, {
+    text: req.body.text,
+    title: req.body.title
+  }, function (err, doc) {
     if (err) return res.status(401).json({message: err})
-    doc.text = req.body.text
-    doc.title = req.body.title
-    doc.save()
+  }).then(()=>{
+    News.find()
+   .then(function(doc){
+     res.send(doc)
+   })
+   .catch(function (err){
+     return res.status(401).json({message: err});
+   })
+  }) 
+})
+  /**************************D E L E T E  N E W S ************************************/
+router.delete('/api/news/:id', (req, res, next) => {
+  console.log(req.params['id'])
+  News.deleteOne({ id: req.params['id']}, function(err, doc) {
+    if (err) return res.status(401).end({message: err})
+  })
+  .then(function(err, doc) {
+    News.find()
     .then(function(doc){
-      res.redirect('/api/news')
+      res.json(doc)
+    })
+    .catch(function (err){
+    return res.status(401).json({message: err});
     })
     .catch(function (err){
       return res.status(401).json({message: err});
     })
-  })    
-})
-  /**************************D E L E T E  N E W S ************************************/
-router.delete('/api/news/:id', passport.authenticate('jwt', { session: false }), (req, res, next) => {
-  News.deleteOne({ _id: req.params['id']}, function(err, doc) {
-    if (err) return res.status(401).end({message: err})
-    res.redirect('/api/news')
-  })   
+  })
 })
   /**************************G E T  A L L  U S E R S ************************************/
-router.get('/api/users', passport.authenticate('jwt', { session: false }), (req, res, next ) => {
+router.get('/api/users', (req, res, next ) => {
   User.find()
   .then(function(doc){
     res.send(doc)
@@ -295,8 +362,8 @@ router.get('/api/users', passport.authenticate('jwt', { session: false }), (req,
   })
 })
   /**************************U P D A T E  U S E R  P E R M I S S I O N************************************/
-  router.patch('/api/users/:id', passport.authenticate('jwt', { session: false }), (req, res, next) => {
-    User.findOne({ _id: req.params['id'] }, function (err, doc) {
+  router.patch('/api/users/:id/permission', passport.authenticate('jwt', { session: false }), (req, res, next) => {
+    User.findOne({ id: req.params['id'] }, function (err, doc) {
       if (err) return res.status(401).json({message: err})
       doc.permission.chat.C = req.body.permission.chat.C
       doc.permission.chat.R = req.body.permission.chat.R
@@ -314,7 +381,13 @@ router.get('/api/users', passport.authenticate('jwt', { session: false }), (req,
       doc.permission.settings.D = req.body.permission.settings.D
       doc.save()
       .then(function(doc){
-        res.redirect('/api/users')
+        User.find()
+        .then(function(inpdoc){
+          res.send(inpdoc)
+        })
+        .catch(function (err){
+          return res.status(401).json({message: err});
+        })
       })
       .catch(function (err){
         return res.status(401).json({message: err});

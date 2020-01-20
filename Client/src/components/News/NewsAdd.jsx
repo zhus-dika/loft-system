@@ -28,7 +28,7 @@ class NewsAdd extends PureComponent {
   componentDidMount() {
     const { match, newsList } = this.props;
     if (match.params.id) {
-      const { title, text, created_at, user } = newsList.find(news => news.id === match.params.id)
+      const { title, text, created_at, user } = newsList.find(news => news.id == match.params.id)
       this.setState({
         title,
         text,

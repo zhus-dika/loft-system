@@ -1,5 +1,5 @@
 {
     "secret": "i-love-terence-tao",
-    "accessTokenLife": 10000,
-    "refreshTokenLife": 100000
+    "accessTokenLife": 300,
+    "refreshTokenLife": 9000
 }
