@@ -158,6 +158,7 @@ class Profile extends PureComponent {
                     type="file"
                     style={{ display: 'none' }}
                     ref={fileRef}
+                    name="avatar"
                     onChange={this.handleChangeFile}
                   />
                 </Button>

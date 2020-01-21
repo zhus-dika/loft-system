@@ -1,17 +1,20 @@
 var express = require('express')
 var router = express.Router()
+const path = require('path')
 const passport = require('passport');
+const fs = require('fs')
 const session = require('express-session');
 var passportJWT = require("passport-jwt");
 var bodyParser = require("body-parser");
 const fetch = require('node-fetch');
+const formidable = require('formidable')
 const mongoose = require("mongoose");
 mongoose.set('useFindAndModify', false);
 const Schema = mongoose.Schema;
-// для работы с promise
 mongoose.Promise = global.Promise;
-// подключение
-const url = "mongodb://localhost:27017/loft_system";
+//const url = "mongodb://localhost:27017/loft_system";
+const url = "mongodb+srv://zhus-dika:ZxCv1234@cluster0-3mndr.mongodb.net/test?retryWrites=true&w=majority";
+
 mongoose
 .connect(url, {
 useUnifiedTopology: true,
@@ -32,8 +35,8 @@ const userScheme = new Schema({
       settings: { C: Boolean, R: Boolean, U: Boolean, D: Boolean }
   },
   surName: String,
-  username: { type : String},// , unique : true},//, required : true, dropDups: true },
-  password: { type: String},//, required: true},
+  username: String ,
+  password: String, 
   accessToken: String,
   refreshToken: String,
   accessTokenExpiredAt: Date,
@@ -143,6 +146,7 @@ router.post('/api/registration', (req, res, next) => {
       middleName: req.body.middleName,
       username: req.body.username,
       password: req.body.password,
+      image: null,
       permission: {
         chat: { C: false, R: true, U: true, D: true },
         news: { C: false, R: true, U: true, D: false },
@@ -219,7 +223,7 @@ router.post("/api/refresh-token", function(req, res) {
   })
   /**************************A P I / P R O F I L E  P A T C H *********************************** */
 
-router.patch("/api/profile", function(req, res){
+router.patch('/api/profile', function(req, res){
   let authorization = req.headers.authorization
   try {
       var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
@@ -227,15 +231,27 @@ router.patch("/api/profile", function(req, res){
     return res.status(401).json({message: err});
   }
   let userId = decoded.id
-  console.log(req.body)
-  User.findById(userId)
+  let form = new formidable.IncomingForm()
+  let upload = path.join('../Client/public/assets/img')
+  form.uploadDir = upload
+  form.parse(req, function (err, fields, files) {
+    if (err) {
+      return next(err)
+    }
+    const fileName = path.join(upload, files.avatar.name)
+    fs.rename(files.avatar.path, fileName, function (err) {
+      if (err) {
+        console.error(err.message)
+        return
+      }
+      User.findById(userId)
    .then(function(doc){
-     if(doc.password == req.body.oldPassword) {
-      doc.firstName = req.body.firstName
-      doc.middleName = req.body.middleName, 
-      doc.surName = req.body.surName, 
-      doc.password = req.body.newPassword,
-      doc.image = path.join('assets', 'img', req.file.name)
+     if(doc.password == fields.oldPassword) {
+      doc.firstName = fields.firstName
+      doc.middleName = fields.middleName, 
+      doc.surName = fields.surName, 
+      doc.password = fields.newPassword,
+      doc.image = path.join('assets', 'img', files.avatar.name)
       doc.save()
       .then(function(ndoc){
         res.send(ndoc)
@@ -245,7 +261,10 @@ router.patch("/api/profile", function(req, res){
       })
       } else return res.status(401).json({message: 'password isnt correct'});
     })
+    })
   })
+})
+  
   /**************************D E L E T E  U S E R  B Y  I D *********************************** */
 
 router.delete('/api/users/:id', (req, res) => {//passport.authenticate('jwt', { session: false }), (req, res) => {

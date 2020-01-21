@@ -203,7 +203,6 @@ export const saveProfile = ({ firstName, surName, middleName, oldPassword, newPa
   getState
 ) =>
   new Promise(resolve => {
-    
     const data = new FormData()
     data.append('firstName', firstName)
     data.append('surName', surName)
