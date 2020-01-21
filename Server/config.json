@@ -1,5 +1,6 @@
 {
     "secret": "i-love-terence-tao",
+    "mongodb": "mongodb+srv://zhus-dika:ZxCv1234@cluster0-3mndr.mongodb.net/test?retryWrites=true&w=majority",
     "accessTokenLife": 300,
     "refreshTokenLife": 9000
 }

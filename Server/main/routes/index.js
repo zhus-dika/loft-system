@@ -3,17 +3,16 @@ var router = express.Router()
 const path = require('path')
 const passport = require('passport');
 const fs = require('fs')
-const session = require('express-session');
 var passportJWT = require("passport-jwt");
 var bodyParser = require("body-parser");
-const fetch = require('node-fetch');
 const formidable = require('formidable')
 const mongoose = require("mongoose");
+const config = require('../../config')
 mongoose.set('useFindAndModify', false);
 const Schema = mongoose.Schema;
 mongoose.Promise = global.Promise;
 //const url = "mongodb://localhost:27017/loft_system";
-const url = "mongodb+srv://zhus-dika:ZxCv1234@cluster0-3mndr.mongodb.net/test?retryWrites=true&w=majority";
+const url = config.mongodb
 
 mongoose
 .connect(url, {
@@ -42,13 +41,6 @@ const userScheme = new Schema({
   accessTokenExpiredAt: Date,
   refreshTokenExpiredAt: Date
 });
-const tokenScheme = new Schema({
-  id: String,
-  accessToken: String,
-  refreshToken: String,
-  accessTokenExpiredAt: Date ,
-  refreshTokenExpiredAt: Date
-})
 const newsScheme = new Schema({
   id: String,
   created_at: Date,
@@ -64,12 +56,10 @@ const newsScheme = new Schema({
   }
 })
 const User = mongoose.model("User", userScheme);
-const Token = mongoose.model("Token", tokenScheme);
 const News = mongoose.model("News", newsScheme);
 var ExtractJwt = passportJWT.ExtractJwt;
 var JwtStrategy = passportJWT.Strategy;
 var jwt = require('jsonwebtoken');
-const config = require('../../config')
 router.use(bodyParser.urlencoded({
   extended: true
 }));
@@ -110,7 +100,7 @@ router.post("/api/login", function(req, res) {
           id = doc._id
         } else return res.status(401).json({message: "no such user found"})
         let update =  new Promise(function(resolve, reject){
-          var payload = {id: id};
+          var payload = {id: id, username: username};
           const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
           const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
           const accessTokenExpiredAt = Date.now() + config.accessTokenLife
@@ -138,6 +128,14 @@ router.post("/api/login", function(req, res) {
 })
 /***********************A P I / R E G I S T R A T I O N***************************************/
 router.post('/api/registration', (req, res, next) => {
+  var pass = false;
+  while(pass) {
+    User.count({username: req.body.username}, function (err, count){ 
+      if(count>0){
+        pass = false
+      } else pass = true
+    })
+  }
   User.countDocuments({}, function(err, count) {
     const user = new User({
       id: count++,
@@ -174,10 +172,11 @@ router.post('/api/registration', (req, res, next) => {
 router.get("/api/profile", function(req, res){
   let authorization = req.headers.authorization
   try {
-    var decoded = jwt.verify(user.accessToken, jwtOptions.secretOrKey)
+    var decoded = jwt.verify(authorization, jwtOptions.secretOrKey)
    } catch (err) {
     return res.status(401).json({message: err});
    }
+   let userId = decoded.id
    User.findById(userId)
    .then(function(doc){
      res.send(doc)
@@ -193,10 +192,9 @@ router.post("/api/refresh-token", function(req, res) {
         var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
     } catch (err) {
       return res.status(401).json({message: err});
-        //res.redirect('/api/login');
     }
     let userId = decoded.id
-    var payload = {id: userId};
+    var payload = {id: id, username: username};
     const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
     const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
     const accessTokenExpiredAt = Date.now() + config.accessTokenLife
@@ -237,31 +235,50 @@ router.patch('/api/profile', function(req, res){
   form.parse(req, function (err, fields, files) {
     if (err) {
       return next(err)
-    }
-    const fileName = path.join(upload, files.avatar.name)
-    fs.rename(files.avatar.path, fileName, function (err) {
-      if (err) {
-        console.error(err.message)
-        return
-      }
+    } 
+    if(files.avatar) {
+      const fileName = path.join(upload, files.avatar.name)
+      fs.rename(files.avatar.path, fileName, function (err) {
+        if (err) {
+          return res.status(401).json({message: err});
+        }
+        User.findById(userId)
+     .then(function(doc){
+       if(doc.password == fields.oldPassword) {
+        doc.firstName = fields.firstName
+        doc.middleName = fields.middleName, 
+        doc.surName = fields.surName, 
+        doc.password = fields.newPassword,
+        doc.image = path.join('assets', 'img', files.avatar.name)
+        doc.save()
+        .then(function(ndoc){
+          res.send(ndoc)
+        })
+        .catch(function (err){
+          return res.status(401).json({message: err});
+        })
+        } else return res.status(401).json({message: 'password is incorrect'});
+      })
+      })
+    } else {
       User.findById(userId)
-   .then(function(doc){
-     if(doc.password == fields.oldPassword) {
-      doc.firstName = fields.firstName
-      doc.middleName = fields.middleName, 
-      doc.surName = fields.surName, 
-      doc.password = fields.newPassword,
-      doc.image = path.join('assets', 'img', files.avatar.name)
-      doc.save()
-      .then(function(ndoc){
-        res.send(ndoc)
-      })
-      .catch(function (err){
-        return res.status(401).json({message: err});
-      })
-      } else return res.status(401).json({message: 'password isnt correct'});
-    })
-    })
+      .then(function(doc){
+        if(doc.password == fields.oldPassword) {
+         doc.firstName = fields.firstName
+         doc.middleName = fields.middleName, 
+         doc.surName = fields.surName, 
+         doc.password = fields.newPassword,
+         doc.image = path.join('assets', 'img', 'no-user-image-big.png')
+         doc.save()
+         .then(function(ndoc){
+           res.send(ndoc)
+         })
+         .catch(function (err){
+           return res.status(401).json({message: err});
+         })
+         } else return res.status(401).json({message: 'password is incorrect'});
+       })
+    }
   })
 })
   

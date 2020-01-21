@@ -7,7 +7,15 @@
 var app = require('../main/app');
 var debug = require('debug')('server:server');
 var http = require('http');
-
+var bodyParser = require("body-parser");
+//var ExtractJwt = passportJWT.ExtractJwt;
+//var JwtStrategy = passportJWT.Strategy;
+var jwt = require('jsonwebtoken');
+var passportJWT = require("passport-jwt");
+app.use(bodyParser.urlencoded({
+  extended: true
+}));
+const io = require('socket.io').listen(server);
 /**
  * Get port from environment and store in Express.
  */
@@ -88,3 +96,40 @@ function onListening() {
     : 'port ' + addr.port;
   debug('Listening on ' + bind);
 }
+var listConnectedUsers = {}
+
+io.on('connection', function connection (socket) {
+  let usersList = (newuser) => {
+    listConnectedUsers.push(newuser)
+    return listConnectedUsers
+  }
+  console.log('')
+  /********************* users:connect ****************** */
+  // событие наступает когда пользователь впервые заходит в чат
+  socket.on('users:add', function (username) {
+    let authorization = req.headers.authorization
+    try {
+      var decoded = jwt.verify(authorization, jwtOptions.secretOrKey)
+    } catch (err) {
+      return res.status(401).json({message: err});
+    }
+    let userId = decoded.id
+    let me = { 
+      socketId: {
+      username: username,
+      socketId: socket.id,
+      userId: userId,
+      activeRoom: null // По умолчанию
+      }
+    }
+    /********************* users:list event *******************/
+    socket.emit('users:list', usersList(me))
+    /********************* users:add event *******************/
+    socket.broadcast
+      .emit('users:add', me);
+  })
+})
+
+
+
+/******************** users:leave **************/
