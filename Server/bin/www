@@ -97,18 +97,18 @@ function onListening() {
   debug('Listening on ' + bind);
 }
 var users = []
+var messages = []
 const rooms = ['general', 'random', 'practice'];
 io.on('connection', function connection (socket) {
+  // socket.emit('users:connect', { userId: userProfile.id, username: userProfile.username });
   socket.on('users:connect', data => {
-    //let defaultRoom = rooms[0]
-    let me = { 
-      socketId: {
+    let defaultRoom = rooms[0]
+    let user = { 
       username: data.username,
       socketId: socket.id,
-      userId: data.userId,
-      }
+      userId: data.userId
     }
-    users.push(me)
+    users.push(user)
     socket.emit('users:list', users)
     socket.emit('users:add', users)
   })
@@ -117,24 +117,34 @@ io.on('connection', function connection (socket) {
   socket.on('message:add', function (data) {
     //Нужно передать пользователю-получателю в параметрах текст сообщения (text) и 
     //senderId отправителя и recipientId получателя с помощью события message:add.
-    let content = {text: data.text, senderId: data.senderId, recipientId: data.recipientId}
-    socket.emit('message:add', content)
+    let message = {
+      text: data.text,
+      senderId: data.senderId,
+      recipientId: data.recipientId
+    }
+    messages.push(message)
+    console.log(message)
+    socket.emit('message:add', message)
   })
   //socket.emit('message:history', { recipientId: userId, userId: userProfile.id })
   socket.on('message:history', function (data) {
     //Нужно вернуть пользователю список сообщений диалога с выбранным пользователем. 
     //Параметры: recipientId - id пользователя-получателя (чат с которым мы открыли), 
     //userId - id пользователя (свой). Список сообщений диалога отправить с помощью события message:history.
-    let content = {recipientId: data.recipientId, userId: data.userId}
-    socket.emit('message:history', content)
+    messages = messages.filter(function( obj ) {
+      return obj.senderId == data.recipientId && obj.recipientId == data.userId || 
+      obj.senderId == data.userId && obj.recipientId == data.recipientId
+    })
+    console.log(messages)
+    socket.emit('message:history', messages)
   })
   //Нужно передать всем подключенным пользователям socketId отключившегося пользователя 
   //(с помощью события users:leave), 
   //и удалить пользователя из объекта всех подключенных пользователей.
-  socket.on('disconnect', function (data) {
-    socket.emit('users:leave', data.socketId)
+  socket.on('disconnect', () => {
+    socket.emit('users:leave', socket.id)
     users = users.filter(function( obj ) {
-      return obj.socketId!== data.socketId
+      return obj.socketId!== socket.id
     })
   })
 })

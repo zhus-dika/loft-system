@@ -66,7 +66,8 @@ export const connectSocket = () => (dispatch, getState) => {
   socket.emit('users:connect', { userId: userProfile.id, username: userProfile.username });
 
   socket
-    .on('users:list', data => dispatch(setUsers(data)))
+    .on('users:list', data => {dispatch(setUsers(data))
+    })
     .on('users:add', data => dispatch(addUser(data)))
     .on('users:leave', data => {
       dispatch(removeUser(data))
