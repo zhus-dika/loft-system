@@ -98,11 +98,9 @@ function onListening() {
 }
 var users = []
 var messages = []
-const rooms = ['general', 'random', 'practice'];
 io.on('connection', function connection (socket) {
   // socket.emit('users:connect', { userId: userProfile.id, username: userProfile.username });
   socket.on('users:connect', data => {
-    let defaultRoom = rooms[0]
     let user = { 
       username: data.username,
       socketId: socket.id,
@@ -122,8 +120,12 @@ io.on('connection', function connection (socket) {
       senderId: data.senderId,
       recipientId: data.recipientId
     }
+    for(var user in users) {
+      if (users.userId == data.senderId) {
+        user.activeRoom = data.roomId
+      }
+    }
     messages.push(message)
-    console.log(message)
     socket.emit('message:add', message)
   })
   //socket.emit('message:history', { recipientId: userId, userId: userProfile.id })
@@ -131,12 +133,15 @@ io.on('connection', function connection (socket) {
     //Нужно вернуть пользователю список сообщений диалога с выбранным пользователем. 
     //Параметры: recipientId - id пользователя-получателя (чат с которым мы открыли), 
     //userId - id пользователя (свой). Список сообщений диалога отправить с помощью события message:history.
-    messages = messages.filter(function( obj ) {
-      return obj.senderId == data.recipientId && obj.recipientId == data.userId || 
-      obj.senderId == data.userId && obj.recipientId == data.recipientId
-    })
-    console.log(messages)
-    socket.emit('message:history', messages)
+    let send_messages = []
+    messages.forEach(msg => {
+        if(msg.senderId == data.recipientId && msg.recipientId == data.userId || 
+          msg.senderId == data.userId && msg.recipientId == data.recipientId) {
+          send_messages.push(msg)
+        }
+      }) 
+    console.log(send_messages)
+    socket.emit('message:history', send_messages)
   })
   //Нужно передать всем подключенным пользователям socketId отключившегося пользователя 
   //(с помощью события users:leave), 
