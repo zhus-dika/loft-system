@@ -146,13 +146,13 @@ router.post('/api/registration', (req, res, next) => {
       password: req.body.password,
       image: null,
       permission: {
-        /*chat: { C: false, R: true, U: true, D: true },
+        chat: { C: false, R: true, U: true, D: true },
         news: { C: false, R: true, U: true, D: false },
-        settings: { C: false, R: false, U: false, D: false }*/
+        settings: { C: false, R: false, U: false, D: false }
         /**for admin**/
-        chat: { C: true, R: true, U: true, D: true },
+        /*chat: { C: true, R: true, U: true, D: true },
         news: { C: true, R: true, U: true, D: true },
-        settings: { C: true, R: true, U: true, D: true}
+        settings: { C: true, R: true, U: true, D: true}*/
       },
       accessToken: '',
       refreshToken: '',
