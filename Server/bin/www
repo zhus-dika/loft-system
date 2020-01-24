@@ -144,7 +144,7 @@ io.on('connection', function connection (socket) {
     socket.emit('message:history', send_messages)
   })
   //Нужно передать всем подключенным пользователям socketId отключившегося пользователя 
-  //(с помощью события users:leave), 
+  //(с помощью события users:leave
   //и удалить пользователя из объекта всех подключенных пользователей.
   socket.on('disconnect', () => {
     socket.emit('users:leave', socket.id)

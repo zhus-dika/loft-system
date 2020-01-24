@@ -1,5 +1,5 @@
 A fullstack React/express web app LOFT SYSTEM
-
+for dev step
 #### 1st window
 `cd Client`
 
@@ -26,3 +26,11 @@ A fullstack React/express web app LOFT SYSTEM
 
 
 ### Used Database (MongoDB) mlab more info https://mlab.com/
+for build 
+#### 1st window
+`cd Client`
+`npm run build`
+
+#### 2nd window
+`cd Server`
+`npm start`

@@ -230,7 +230,7 @@ router.patch('/api/profile', function(req, res){
   }
   let userId = decoded.id
   let form = new formidable.IncomingForm()
-  let upload = path.join('../Client/public/assets/img')
+  let upload = path.join('../Client/build/assets/img')
   form.uploadDir = upload
   form.parse(req, function (err, fields, files) {
     if (err) {
