@@ -1,6 +1,9 @@
-Server/node_modules/
-Client/node_modules/
-Server/package-lock.json
-Client/package-lock.json
-Server/queries_psql
-
+/Server/node_modules/*
+/Client/node_modules/*
+/Server/package-lock.json
+/Client/package-lock.json
+/Server/main/queries_psql
+/Server/config.json
+/Server/npm-debug.log
+/Server.DS_Store
+/Server/*.env

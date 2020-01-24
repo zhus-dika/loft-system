@@ -1,18 +1,30 @@
 var express = require('express')
 var router = express.Router()
+const path = require('path')
 const passport = require('passport');
-const session = require('express-session');
+const fs = require('fs')
 var passportJWT = require("passport-jwt");
 var bodyParser = require("body-parser");
-const fetch = require('node-fetch');
+const formidable = require('formidable')
 const mongoose = require("mongoose");
+const config = require('../../config')
+mongoose.set('useFindAndModify', false);
 const Schema = mongoose.Schema;
-// для работы с promise
 mongoose.Promise = global.Promise;
-// подключение
-mongoose.connect("mongodb://localhost:27017/loft_system")
-// установка схемы
-const personScheme = new Schema({
+//const url = "mongodb://localhost:27017/loft_system";
+const url = config.mongodb
+
+mongoose
+.connect(url, {
+useUnifiedTopology: true,
+useNewUrlParser: true,
+})
+.then(() => console.log('DB Connected!'))
+.catch(err => {
+console.log('DB Connection Error: ${err.message}');
+});
+const userScheme = new Schema({
+  id: {type:String, unique: true},
   firstName: String,
   image: String,
   middleName: String,
@@ -22,446 +34,396 @@ const personScheme = new Schema({
       settings: { C: Boolean, R: Boolean, U: Boolean, D: Boolean }
   },
   surName: String,
-  username: String,
+  username: {type:String, unique: true},
+  password: String, 
   accessToken: String,
   refreshToken: String,
   accessTokenExpiredAt: Date,
   refreshTokenExpiredAt: Date
 });
-
+const newsScheme = new Schema({
+  id: String,
+  created_at: Date,
+  text: String,
+  title: String,
+  user: {
+    firstName: String,
+    id: String,
+    image: String,
+    middleName: String,
+    surName: String,
+    username: String
+  }
+})
+const User = mongoose.model("User", userScheme);
+const News = mongoose.model("News", newsScheme);
 var ExtractJwt = passportJWT.ExtractJwt;
 var JwtStrategy = passportJWT.Strategy;
 var jwt = require('jsonwebtoken');
-const config = require('../../config')
-var pool = require('../models/db')
 router.use(bodyParser.urlencoded({
   extended: true
 }));
 router.use(bodyParser.json())
-var jwtOptions = {}
-jwtOptions.jwtFromRequest = ExtractJwt.fromAuthHeaderAsBearerToken();
-jwtOptions.secretOrKey = config.secret;
-
+const jwtOptions = {  
+  // Telling Passport to check authorization headers for JWT
+  jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+  // Telling Passport where to find the secret
+  secretOrKey: config.secret,
+  passReqToCallback: true //<= Important, so that the verify function can accept the req param ie verify(req,payload,done)
+}; 
 router.use(passport.initialize());
-var strategy = new JwtStrategy(jwtOptions, function(jwt_payload, next) {
+var strategy = new JwtStrategy(jwtOptions, function(req, jwt_payload, done) {
   console.log('payload received', jwt_payload);
-  let id = [jwt_payload.id]
-  pool.query(`select * from users where uid=$1;`, id, 
-  (q_err, q_res) => {
-    if(q_err) next(q_err)
-    let user = q_res.rows[0]
-    if (user) {
-      next(null, user);
-    } else {
-      next(null, false);
-    }
-  })
+  let userId = jwt_payload.id
+  User.findById(userId)
+   .then(function(doc){
+     req.user = doc
+     done(null, doc);
+   })
+   .catch(function (err){
+     done(null, false);
+   })
 })
 passport.use(strategy);
-function getTokenFromHeaders(req){
-  if(req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer'){
-      return req.headers.authorization.split(' ')[1];
-  }
-  return null;
-}
-/**************************************************************/
-
+/*************************A P I / L O G I N*************************************/
 router.post("/api/login", function(req, res) {
-  if(req.body.username && req.body.password){
-    var username = req.body.username;
-    var password = req.body.password;
-  }
-  let values = [username, password]
-  pool.query(`select * from users where username=$1 and password=$2;`, values, (q_err, q_res) => {
-    if(q_err) return next(q_err)
-    let user = q_res.rows[0]
-    if( !user ){ res.status(401).json({message: "no such user found"});
-     } else { 
-      var payload = {id: user.uid};
-      const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
-      const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
-      values = [accessToken, refreshToken, user.uid]
-      pool.query(`UPDATE users SET accessToken = $1, refreshToken=$2 WHERE uid = $3;`, values)
-      req.session.accessToken = accessToken
-      req.session.refreshToken = refreshToken
-      //req.session.accessTokenExpiredAt = Date.now() + config.accessTokenLife
-      return res.send(user)
-     }
-  })
-})
-/**************************************************************/
-
-router.get("/api/profile", function(req, res){
- /* try {
-    var decoded = jwt.verify(req.session.accessToken, jwtOptions.secretOrKey)
-   } catch (e) {
-    console.log('from redirect')
-    req.headers.authorization = req.session.refreshToken
-   }*/
-   let headers = new Headers({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token });
-   fetch('http://localhost:5000/api/refresh-token', {
-        method: 'post',
-        //body:    JSON.stringify(body),
-        headers: headers,
-    })
-    //.then(res => res.json())
-    .then(res.end('success'));
-    //res.render('http://localhost:5000/api/profile')
-/*
-   let headers = new Headers({'Content-Type': 'application/json'});  
-   headers.append('Authorization','Bearer ')
-   //let options = new RequestOptions();
-   let userId = decoded.id
-   pool.query(`select * from users where uid=$1;`, [userId], (q_err, q_res) => {
-    if(q_err) next(q_err)
-    let user = q_res.rows[0]
-    if (user) {
-      res.send(user)
-    } else {
-      return res.status(401).send('unauthorized');
-    }
-  })*/
-})
-/************************************************************* */
-router.post("/api/refresh-token", function(req, res) {
-  console.log('from refresh-token')
-  if (req.headers && req.headers.authorization) {
-    var authorization = getTokenFromHeaders(req)
-    console.log(authorization)
-    try {
-        var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
-    } catch (e) {
-        res.redirect('/api/login');
-    }
-    let userId = decoded.id
-    pool.query(`select * from users where uid=$1;`, [userId], (q_err, q_res) => {
-      if(q_err) next(q_err)
-      let user = q_res.rows[0]
-      if (user.refreshToken == authorization) {
-        var payload = {id: userId}
-        const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
-        const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
-        values = [accessToken, refreshToken, userId]
-        pool.query(`UPDATE users SET accessToken = $1, refreshToken=$2 WHERE uid = $3;`, values)
-        res.json({accessToken, refreshToken});
+  let username = req.body.username
+  let password = req.body.password
+  var id
+  if(username && password){
+    User.findOne({username: username, password: password}).lean().exec(function(err, doc) {
+      if (err) {
+        return res.status(401).json({message: err});
       } else {
-        return res.status(401).send('unauthorized');
+        if (doc) {
+          if (err) return res.status(401).json({message: err})
+          id = doc._id
+        } else return res.status(401).json({message: "no such user found"})
+        let update =  new Promise(function(resolve, reject){
+          var payload = {id: id, username: username};
+          const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+          const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+          const accessTokenExpiredAt = Date.now() + config.accessTokenLife
+          const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
+          User.findByIdAndUpdate(id, {
+          accessToken: accessToken,
+          refreshToken: refreshToken, 
+          accessTokenExpiredAt: accessTokenExpiredAt, 
+          refreshTokenExpiredAt: refreshTokenExpiredAt
+        }).lean().exec(function(err, doc) {
+          if (err) return res.status(401).json({message: err});
+          resolve(id)
+        })
+      })
+        update.then(function(id){
+          User.findById(id, function(err, doc){
+            res.send(doc)
+          })
+        }).catch(function(err) {
+          return res.status(401).json({message: err}); 
+        })      
       }
     })
   }
 })
-router.patch("/api/profile", passport.authenticate('jwt', { session: false }), function(req, res){
-  /*firstName: String,
-    middleName: String,
-    surName: String,
-    oldPassword: String,
-    newPassword: String,
-    avatar: File*/
-  if (req.headers && req.headers.authorization) {
-    var authorization = req.headers.authorization.split(' ')[1],
-        decoded;
-    
-    let userId = [decoded.id]
-    pool.query(`select * from users where uid=$1;`, userId, 
-  (q_err, q_res) => {
-    if(q_err) next(q_err)
-    let user = q_res.rows
-    if (user) {
-      res.send(user);
+/***********************A P I / R E G I S T R A T I O N***************************************/
+router.post('/api/registration', (req, res, next) => {
+  var pass = false;
+  while(pass) {
+    User.count({username: req.body.username}, function (err, count){ 
+      if(count>0){
+        pass = false
+      } else pass = true
+    })
+  }
+  User.countDocuments({}, function(err, count) {
+    const user = new User({
+      id: count++,
+      firstName: req.body.firstName,
+      surName: req.body.surName,
+      middleName: req.body.middleName,
+      username: req.body.username,
+      password: req.body.password,
+      image: null,
+      permission: {
+        chat: { C: false, R: true, U: true, D: true },
+        news: { C: false, R: true, U: true, D: false },
+        settings: { C: false, R: false, U: false, D: false }
+        /**for admin**/
+        /*chat: { C: true, R: true, U: true, D: true },
+        news: { C: true, R: true, U: true, D: true },
+        settings: { C: true, R: true, U: true, D: true}*/
+      },
+      accessToken: '',
+      refreshToken: '',
+      accessTokenExpiredAt: Date.now(),
+      refreshTokenExpiredAt: Date.now()
+    })
+    user.save()
+    .then(function(doc){
+      res.send(doc)
+    })
+    .catch(function (err){
+      return res.status(401).json({message: err});
+    })
+  })
+})
+/****************************A P I / P R O F I L E**********************************/
+router.get("/api/profile", function(req, res){
+  let authorization = req.headers.authorization
+  try {
+    var decoded = jwt.verify(authorization, jwtOptions.secretOrKey)
+   } catch (err) {
+    return res.status(401).json({message: err});
+   }
+   let userId = decoded.id
+   User.findById(userId)
+   .then(function(doc){
+     res.send(doc)
+   })
+   .catch(function (err){
+    return res.status(401).json({message: err})
+   })
+})
+/**************************A P I / R E F R E S H - T O K E N*********************************** */
+router.post("/api/refresh-token", function(req, res) {
+  let authorization = req.headers.authorization
+    try {
+        var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
+    } catch (err) {
+      return res.status(401).json({message: err});
+    }
+    let userId = decoded.id
+    var payload = {id: id, username: username};
+    const accessToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.accessTokenLife})
+    const refreshToken = jwt.sign(payload, jwtOptions.secretOrKey, { expiresIn: config.refreshTokenLife}) 
+    const accessTokenExpiredAt = Date.now() + config.accessTokenLife
+    const refreshTokenExpiredAt = Date.now() + config.refreshTokenLife
+    User.findByIdAndUpdate(userId, {
+      accessToken: accessToken,
+      refreshToken: refreshToken, 
+      accessTokenExpiredAt: accessTokenExpiredAt, 
+      refreshTokenExpiredAt: refreshTokenExpiredAt
+    }).lean().exec(function(err, doc) {
+      if (err) return res.status(401).json({message: err});
+      if (doc.refreshToken != authorization) {
+        //res.redirect('/api/login')
+        return res.status(401).json({message: err});
+      }
+      req.headers.authorization = refreshToken
+      res.send({
+        accessToken: accessToken, 
+        refreshToken: refreshToken,
+        accessTokenExpiredAt: accessTokenExpiredAt,
+        refreshTokenExpiredAt: refreshTokenExpiredAt
+      })
+    })
+  })
+  /**************************A P I / P R O F I L E  P A T C H *********************************** */
+
+router.patch('/api/profile', function(req, res){
+  let authorization = req.headers.authorization
+  try {
+      var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
+  } catch (err) {
+    return res.status(401).json({message: err});
+  }
+  let userId = decoded.id
+  let form = new formidable.IncomingForm()
+  let upload = path.join('../Client/build/assets/img')
+  form.uploadDir = upload
+  form.parse(req, function (err, fields, files) {
+    if (err) {
+      return next(err)
+    } 
+    if(files.avatar) {
+      const fileName = path.join(upload, files.avatar.name)
+      fs.rename(files.avatar.path, fileName, function (err) {
+        if (err) {
+          return res.status(401).json({message: err});
+        }
+        User.findById(userId)
+     .then(function(doc){
+       if(doc.password == fields.oldPassword) {
+        doc.firstName = fields.firstName
+        doc.middleName = fields.middleName, 
+        doc.surName = fields.surName, 
+        doc.password = fields.newPassword,
+        doc.image = path.join('assets', 'img', files.avatar.name)
+        doc.save()
+        .then(function(ndoc){
+          res.send(ndoc)
+        })
+        .catch(function (err){
+          return res.status(401).json({message: err});
+        })
+        } else return res.status(401).json({message: 'password is incorrect'});
+      })
+      })
     } else {
-      return res.status(404).send('not found');
+      User.findById(userId)
+      .then(function(doc){
+        if(doc.password == fields.oldPassword) {
+         doc.firstName = fields.firstName
+         doc.middleName = fields.middleName, 
+         doc.surName = fields.surName, 
+         doc.password = fields.newPassword,
+         doc.save()
+         .then(function(ndoc){
+           res.send(ndoc)
+         })
+         .catch(function (err){
+           return res.status(401).json({message: err});
+         })
+         } else return res.status(401).json({message: 'password is incorrect'});
+       })
     }
   })
-}
-});
-router.post('/api/registration', (req, res, next) => {
-  const values = [req.body.username, req.body.surName, 
-    req.body.firstName, req.body.middleName, req.body.password]
-  pool.query(`INSERT INTO users(username, surName, firstName, middleName, password)
-              VALUES($1, $2, $3, $4, $5)`, values, (q_err, q_res) => {
-          if(q_err) return next(q_err);
-          res.json(q_res.rows
-            
-            )
+})
+  
+  /**************************D E L E T E  U S E R  B Y  I D *********************************** */
+
+router.delete('/api/users/:id', (req, res) => {//passport.authenticate('jwt', { session: false }), (req, res) => {
+    User.deleteOne({ id: req.params['id']}, function(err, doc) {
+      if (err) return res.status(401).json({message: err})
+      res.send(doc)
     })
 })
-router.delete('/api/users/:id', (req, res, next) => {
-  pool.query(`DELETE FROM users
-              WHERE uid = $1`, [req.params['id']],
-              (q_err, q_res) => {
-                  res.json(q_res.rows[0])
-        })
-})
+  /**************************G E T  A L L  N E W S *********************************** */
+
 router.get('/api/news', (req, res, next ) => {
-  console.log(req.session.token)
-  pool.query("SELECT * FROM news ORDER BY created_at DESC", (q_err, q_res) => {
-    res.json(q_res.rows)
-    })
+  News.find()
+   .then(function(doc){
+     res.send(doc)
+   })
+   .catch(function (err){
+     return res.status(401).json({message: err});
+   })
+
 })
+  /**************************C R E A T E  N E W S *********************************** */
 
 router.post('/api/news', (req, res, next) => {
-  const values = [req.body.title, req.body.text, passport.user]
-  console.log(passport.user)
-  pool.query(`INSERT INTO news(text, title, user_id, created_at) 
-              VALUES($1, $2, $3, NOW() )`, values, (q_err, q_res) => {
-          if(q_err) return next(q_err);
-          res.json(q_res.rows)
+  let authorization = req.headers.authorization
+  try {
+      var decoded = jwt.verify(authorization, jwtOptions.secretOrKey);
+  } catch (err) {
+    return res.status(401).json({message: err});
+  }
+  let userId = decoded.id
+  User.findById(userId)
+   .then(function(doc){
+    News.countDocuments({}, function(err, count) {
+    const news = new News({
+      id: count++,
+      created_at: Date.now(),
+      text: req.body.text,
+      title: req.body.title,
+      user: {
+        firstName: doc.firstName,
+        id: doc.id,
+        image: '',
+        middleName: doc.middleName,
+        surName: doc.surName,
+        username: doc.username
+      }
     })
+    news.save()
+    .then(function(doc){
+      News.find()
+      .then(function(indoc){
+        res.send(indoc)
+      })
+      .catch(function (err){
+        return res.status(401).json({message: err});
+      })
+    })
+    .catch(function (err){
+      return res.status(401).json({message: err});
+    })
+  }) 
+  })
+   .catch(function (err){
+     return res.status(401).json({message: err});
+   })
 })
-/*
-router.patch('/api/profile', (req, res, next) => {
-  const values = [req.body.firstName, req.body.middleName, req.body.surName,
-     req.body.newPassword, req.body.avatar.name]
-  pool.query(`UPDATE users SET firstName= $1, middleName=$2, surName=$3, password=$5, image=$6
-              WHERE pid = $4`, values,
-              (q_err, q_res) => {
-                console.log(q_res)
-                console.log(q_err)
+  /**************************U P D A T E  N E W S ************************************/
+router.patch('/api/news/:id', (req, res, next) => {
+  News.findOneAndUpdate({id: req.params['id'] }, {
+    text: req.body.text,
+    title: req.body.title
+  }, function (err, doc) {
+    if (err) return res.status(401).json({message: err})
+  }).then(()=>{
+    News.find()
+   .then(function(doc){
+     res.send(doc)
+   })
+   .catch(function (err){
+     return res.status(401).json({message: err});
+   })
+  }) 
+})
+  /**************************D E L E T E  N E W S ************************************/
+router.delete('/api/news/:id', (req, res, next) => {
+  console.log(req.params['id'])
+  News.deleteOne({ id: req.params['id']}, function(err, doc) {
+    if (err) return res.status(401).end({message: err})
+  })
+  .then(function(err, doc) {
+    News.find()
+    .then(function(doc){
+      res.json(doc)
+    })
+    .catch(function (err){
+    return res.status(401).json({message: err});
+    })
+    .catch(function (err){
+      return res.status(401).json({message: err});
+    })
+  })
+})
+  /**************************G E T  A L L  U S E R S ************************************/
+router.get('/api/users', (req, res, next ) => {
+  User.find()
+  .then(function(doc){
+    res.send(doc)
+  })
+  .catch(function (err){
+    return res.status(401).json({message: err});
+  })
+})
+  /**************************U P D A T E  U S E R  P E R M I S S I O N************************************/
+  router.patch('/api/users/:id/permission', (req, res, next) => {
+    User.findOne({ id: req.params['id'] }, function (err, doc) {
+      if (err) return res.status(401).json({message: err})
+      doc.permission.chat.C = req.body.permission.chat.C
+      doc.permission.chat.R = req.body.permission.chat.R
+      doc.permission.chat.U = req.body.permission.chat.U
+      doc.permission.chat.D = req.body.permission.chat.D
+
+      doc.permission.news.C = req.body.permission.news.C
+      doc.permission.news.R = req.body.permission.news.R
+      doc.permission.news.U = req.body.permission.news.U
+      doc.permission.news.D = req.body.permission.news.D
+
+      doc.permission.settings.C = req.body.permission.settings.C
+      doc.permission.settings.R = req.body.permission.settings.R
+      doc.permission.settings.U = req.body.permission.settings.U
+      doc.permission.settings.D = req.body.permission.settings.D
+      doc.save()
+      .then(function(doc){
+        User.find()
+        .then(function(inpdoc){
+          res.send(inpdoc)
         })
-})
-
-router.get('/api/get/post', (req, res, next) => {
-  const post_id = req.query.post_id
-
-  pool.query(`SELECT * FROM posts
-              WHERE pid=$1`, [ post_id ],
-              (q_err, q_res) => {
-                res.json(q_res.rows)
-      })
-} )
-
-
- router.post('/api/post/posttodb', (req, res, next) => {
-   const values = [req.body.title, req.body.body, req.body.uid, req.body.username]
-   pool.query(`INSERT INTO posts(title, body, user_id, author, date_created)
-               VALUES($1, $2, $3, $4, NOW() )`, values, (q_err, q_res) => {
-           if(q_err) return next(q_err);
-           res.json(q_res.rows)
-     })
- })
-
-router.put('/api/put/post', (req, res, next) => {
-  const values = [req.body.title, req.body.body, req.body.uid, req.body.pid, req.body.username]
-  pool.query(`UPDATE posts SET title= $1, body=$2, user_id=$3, author=$5, date_created=NOW()
-              WHERE pid = $4`, values,
-              (q_err, q_res) => {
-                console.log(q_res)
-                console.log(q_err)
+        .catch(function (err){
+          return res.status(401).json({message: err});
         })
-})
-
-router.delete('/api/delete/postcomments', (req, res, next) => {
-  const post_id = req.body.post_id
-  pool.query(`DELETE FROM comments
-              WHERE post_id = $1`, [post_id],
-              (q_err, q_res) => {
-                  //res.json(q_res.rows)
-                  console.log(q_err)
-        })
-})
-
-router.delete('/api/delete/post', (req, res, next) => {
-  const post_id = req.body.post_id
-  pool.query(`DELETE FROM posts WHERE pid = $1`, [ post_id ],
-              (q_err, q_res) => {
-                res.json(q_res.rows)
-                console.log(q_err)
-       })
-})
-
-/*
-    COMMENTS ROUTES SECTION
-*/
-
-
-router.post('/api/post/commenttodb', (req, res, next) => {
-  const values = [ req.body.comment, req.body.user_id, req.body.username, req.body.post_id]
-
-  pool.query(`INSERT INTO comments(comment, user_id, author, post_id, date_created)
-              VALUES($1, $2, $3, $4, NOW())`, values,
-              (q_err, q_res ) => {
-                  res.json(q_res.rows)
-                  console.log(q_err)
       })
-})
-
-router.put('/api/put/commenttodb', (req, res, next) => {
-  const values = [ req.body.comment, req.body.user_id, req.body.post_id, req.body.username, req.body.cid]
-
-  pool.query(`UPDATE comments SET
-              comment = $1, user_id = $2, post_id = $3, author = $4, date_created=NOW()
-              WHERE cid=$5`, values,
-              (q_err, q_res ) => {
-                  res.json(q_res.rows)
-                  console.log(q_err)
+      .catch(function (err){
+        return res.status(401).json({message: err});
       })
-})
-
-
-router.delete('/api/delete/comment', (req, res, next) => {
-  const cid = req.body.comment_id
-  console.log(cid)
-  pool.query(`DELETE FROM comments
-              WHERE cid=$1`, [ cid ],
-              (q_err, q_res ) => {
-                  res.json(q_res)
-                  console.log(q_err)
-      })
-})
-
-
-router.get('/api/get/allpostcomments', (req, res, next) => {
-  const post_id = String(req.query.post_id)
-  pool.query(`SELECT * FROM comments
-              WHERE post_id=$1`, [ post_id ],
-              (q_err, q_res ) => {
-                  res.json(q_res.rows)
-      })
-})
-
-/*
-  USER PROFILE SECTION
-*/
-
-router.post('/api/posts/userprofiletodb', (req, res, next) => {
-  const values = [req.body.profile.nickname, req.body.profile.email, req.body.profile.email_verified]
-  pool.query(`INSERT INTO users(username, email, email_verified, date_created)
-              VALUES($1, $2, $3, NOW())
-              ON CONFLICT DO NOTHING`, values,
-              (q_err, q_res) => {
-                res.json(q_res.rows)
-      })
-} )
-
-router.get('/api/get/userprofilefromdb', (req, res, next) => {
-  const email = req.query.email
-  console.log(email)
-  pool.query(`SELECT * FROM users
-              WHERE email=$1`, [ email ],
-              (q_err, q_res) => {
-                res.json(q_res.rows)
-      })
-} )
-
-router.get('/api/get/userposts', (req, res, next) => {
-  const user_id = req.query.user_id
-  console.log(user_id)
-  pool.query(`SELECT * FROM posts
-              WHERE user_id=$1`, [ user_id ],
-              (q_err, q_res) => {
-                res.json(q_res.rows)
-      })
-} )
-
-
-router.put('/api/put/likes', (req, res, next) => {
-  const uid = [req.body.uid]
-  const post_id = String(req.body.post_id)
-
-  const values = [ uid, post_id ]
-  console.log(values)
-  pool.query(`UPDATE posts
-              SET like_user_id = like_user_id || $1, likes = likes + 1
-              WHERE NOT (like_user_id @> $1)
-              AND pid = ($2)`,
-     values, (q_err, q_res) => {
-    if (q_err) return next(q_err);
-    console.log(q_res)
-    res.json(q_res.rows);
-  });
-});
-
-
-//Search Posts
-router.get('/api/get/searchpost', (req, res, next) => {
-  search_query = String(req.query.search_query)
-  pool.query(`SELECT * FROM posts
-              WHERE search_vector @@ to_tsquery($1)`,
-    [ search_query ], (q_err, q_res) => {
-    if (q_err) return next(q_err);
-    res.json(q_res.rows);
-  });
-});
-
-//Save posts to db
-router.post('/api/post/posttodb', (req, res, next) => {
-  const body_vector = String(req.body.body)
-  const title_vector = String(req.body.title)
-  const username_vector = String(req.body.username)
-
-  const search_vector = [title_vector, body_vector, username_vector]
-  const values = [req.body.title, req.body.body, search_vector, req.body.uid, req.body.username]
-  pool.query(`INSERT INTO
-              posts(title, body, search_vector, user_id, author, date_created)
-              VALUES($1, $2, to_tsvector($3), $4, $5, NOW())`,
-    values, (q_err, q_res) => {
-    if (q_err) return next(q_err);
-    res.json(q_res.rows);
-  });
-});
-
-
-// Retrieve another users profile from db based on username
-router.get('/api/get/otheruserprofilefromdb', (req, res, next) => {
-  // const email = [ "%" + req.query.email + "%"]
-  const username = String(req.query.username)
-  pool.query(`SELECT * FROM users
-              WHERE username = $1`,
-    [ username ], (q_err, q_res) => {
-    res.json(q_res.rows)
-  });
-});
-/*
-//Get another user's posts based on username
-router.get('/api/get/otheruserposts', (req, res, next) => {
-  const username = String(req.query.username)
-  pool.query(`SELECT * FROM posts
-              WHERE author = $1`,
-    [ username ], (q_err, q_res) => {
-    res.json(q_res.rows)
-  });
-});*/
-/*
-//Send Message to db
-router.post('/api/post/messagetodb', (req, res, next) => {
-
-  const from_username = String(req.body.message_sender)
-  const to_username = String(req.body.message_to)
-  const title = String(req.body.title)
-  const body = String(req.body.body)
-
-  const values = [from_username, to_username, title, body]
-  pool.query(`INSERT INTO messages(message_sender, message_to, message_title, message_body, date_created)
-              VALUES($1, $2, $3, $4, NOW())`,
-    values, (q_err, q_res) => {
-    if (q_err) return next(q_err);
-    console.log(q_res)
-    res.json(q_res.rows);
-  });
-});*/
-/*
-//Get another user's posts based on username
-router.get('/api/get/usermessages', (req, res, next) => {
-  const username = String(req.query.username)
-  console.log(username)
-  pool.query(`SELECT * FROM messages
-              WHERE message_to = $1`,
-    [ username ], (q_err, q_res) => {
-    res.json(q_res.rows)
-  });
-});
-
-//Delete a message with the message id
-router.delete('/api/delete/usermessage', (req, res, next) => {
-  const mid = req.body.mid
-  pool.query(`DELETE FROM messages
-              WHERE mid = $1`,
-    [ mid ], (q_err, q_res) => {
-    if (q_err) return next(q_err);
-    console.log(q_res)
-    res.json(q_res.rows);
-  });
-});
-*/
-
+    })    
+  })
 module.exports = router
